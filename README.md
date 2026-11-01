@@ -1,6 +1,8 @@
 # 写真判定係
 
 ゴールの写真を見て1着を決める、判定係のブラウザゲーム。
+**遊ぶ：** https://krieafly8661.github.io/shashin-hantei/
+
 
 ## 遊び方
 
