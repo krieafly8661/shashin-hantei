@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>写真判定係</title>
+<meta name="description" content="ゴールの写真を見て1着を決める。陸上は胴体、競馬は鼻先、競輪は前輪の先、スケートは刃の先。">
+<style>
+:root { --bg: #f2f2ee; --surface: #fff; --fg: #1d1f24; --muted: #646872; --line: #d6d6cf; --accent: #d1342f; --accent-fg: #fff; --ok: #2f8a4a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #15161a; --surface: #1f2126; --fg: #ececea; --muted: #a0a3ab; --line: #32353c; --accent: #ff6a5e; --accent-fg: #15161a; --ok: #6fd08a; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #15161a; --surface: #1f2126; --fg: #ececea; --muted: #a0a3ab; --line: #32353c; --accent: #ff6a5e; --accent-fg: #15161a; --ok: #6fd08a; color-scheme: dark; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+.app { max-width: 560px; margin: 0 auto; padding: 12px 16px 24px; display: flex; flex-direction: column; gap: 10px; }
+header { display: flex; justify-content: space-between; align-items: baseline; }
+h1 { margin: 0; font-size: 24px; }
+.stat { font-weight: 700; font-variant-numeric: tabular-nums; }
+.lives { color: var(--accent); letter-spacing: .1em; }
+.rule { background: var(--surface); border: 2px solid var(--fg); border-radius: 12px; padding: 8px 12px; font-size: 15px; }
+.rule b { color: var(--accent); }
+canvas { display: block; width: 100%; border-radius: 10px; touch-action: none; cursor: ew-resize; }
+.timer { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.timer i { display: block; height: 100%; background: var(--fg); width: 100%; }
+.answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; }
+.answers button { font: inherit; font-weight: 800; font-size: 17px; padding: 14px 0; border-radius: 12px; border: 2px solid var(--fg); background: var(--surface); color: var(--fg); cursor: pointer; }
+.answers button.tie { font-size: 15px; }
+.answers button:disabled { opacity: .5; }
+.feedback { min-height: 1.6em; font-weight: 700; text-align: center; }
+.feedback.ok { color: var(--ok); } .feedback.ng { color: var(--accent); }
+.hint { font-size: 13px; color: var(--muted); text-align: center; }
+.panel { background: var(--surface); border: 2px solid var(--fg); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; text-align: center; box-shadow: 4px 4px 0 var(--fg); }
+.panel h2 { margin: 0; font-size: 26px; }
+.panel p { margin: 0; }
+.lead { color: var(--muted); font-size: 15px; }
+table.rules { border-collapse: collapse; width: 100%; font-size: 15px; text-align: left; }
+table.rules td { padding: 6px 4px; border-bottom: 1px solid var(--line); }
+table.rules td:first-child { font-weight: 700; white-space: nowrap; width: 8em; }
+.btn { font: inherit; font-weight: 800; border-radius: 12px; padding: 14px; border: 2px solid var(--fg); background: var(--surface); color: var(--fg); cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-size: 18px; }
+.btn.dark { background: var(--fg); color: var(--bg); }
+.row { display: flex; gap: 8px; } .row .btn { flex: 1; }
+.big { font-size: 44px; font-weight: 800; line-height: 1.1; }
+.small { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header><h1>写真判定係</h1><span class="stat" id="hud"></span></header>
+
+  <section class="panel" id="intro">
+    <h2>どっちが先にゴールした？</h2>
+    <p class="lead">決勝線の写真を見て、1着を決める係です。<br>競技ごとに「どこが線に届いたら」ゴールかが決まっています。</p>
+    <table class="rules">
+      <tr><td>陸上</td><td>胴体。頭・腕・脚は数えない</td></tr>
+      <tr><td>競馬</td><td>鼻の先</td></tr>
+      <tr><td>競輪</td><td>前輪の先</td></tr>
+      <tr><td>スケート</td><td>前に出したスケートの刃の先</td></tr>
+    </table>
+    <p class="lead">写真をなぞると縦の線が動きます。3回まちがえたら交代。</p>
+    <button class="btn primary" id="start">判定をはじめる</button>
+  </section>
+
+  <section id="game" hidden>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="rule" id="rule"></div>
+      <canvas id="cv" aria-label="ゴールの写真"></canvas>
+      <div class="timer"><i id="bar"></i></div>
+      <div class="answers" id="answers"></div>
+      <div class="feedback" id="fb"></div>
+      <p class="hint">写真をなぞると、くらべる線が動きます</p>
+    </div>
+  </section>
+
+  <section class="panel" id="result" hidden>
+    <p class="small">連続で正しく判定した数</p>
+    <div class="big" id="rNum"></div>
+    <p style="font-weight:800;font-size:20px" id="rTitle"></p>
+    <p class="lead" id="rLast"></p>
+    <div class="row"><button class="btn dark" id="share">結果をXに投稿</button><button class="btn primary" id="again">もう一回</button></div>
+    <p class="small" id="rBest"></p>
+  </section>
+</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+const SPORTS = {
+  run: { name: "陸上", rule: "<b>胴体</b>が先に線に届いた人が1着。頭・腕・脚は数えない。" },
+  horse: { name: "競馬", rule: "<b>鼻の先</b>が先に線に届いた馬が1着。" },
+  bike: { name: "競輪", rule: "<b>前輪の先</b>が先に線に届いた自転車が1着。" },
+  skate: { name: "スケート", rule: "前に出した<b>スケートの刃の先</b>が先に届いた人が1着。" },
+};
+const COLORS = ["#d1342f", "#2a62c9", "#e0a21a", "#2f8a4a"];
+const LANE_NAMES = ["赤", "青", "黄", "緑"];
+const TITLES = [[25, "人間スリットカメラ"], [15, "写真判定長"], [8, "ベテラン判定員"], [4, "一人前の判定員"], [1, "新人判定員"], [0, "見習い"]];
+
+let W = 0, H = 0, DPR = 1, laneH = 0, unit = 1;
+let streak = 0, lives = 3, round = null, lineX = 0, state = "intro", timeLeft = 0, lastT = 0, best = 0, lastSport = "";
+try { best = +localStorage.getItem("hantei.best") || 0; } catch (e) {}
+
+function layout(n) {
+  DPR = Math.min(2, devicePixelRatio || 1);
+  W = cv.clientWidth; laneH = Math.round(clamp(W * 0.2, 70, 110));
+  H = laneH * n + 22;
+  cv.width = W * DPR; cv.height = H * DPR; cv.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  unit = laneH / 100;
+}
+
+// ---------- rounds ----------
+function newRound() {
+  const n = streak >= 6 ? 4 : 3;
+  let sport = pick(Object.keys(SPORTS));
+  if (sport === lastSport && Math.random() < 0.6) sport = pick(Object.keys(SPORTS));
+  lastSport = sport;
+  layout(n);
+  // the gap between 1st and 2nd shrinks as the streak grows (figure units, 1 unit ~ 1/100 lane height)
+  const gap = Math.max(2.2, 15 * Math.pow(0.84, streak));
+  const tie = streak >= 4 && Math.random() < 0.12;
+  const order = [...Array(n).keys()].sort(() => Math.random() - 0.5);
+  const keyX = new Array(n);
+  const base = W * rnd(0.56, 0.7) / unit;
+  keyX[order[0]] = base;
+  keyX[order[1]] = tie ? base : base - gap;
+  for (let i = 2; i < n; i++) keyX[order[i]] = base - gap - rnd(4, 14) * (i - 1);
+  // decoys: losers reaching further with the parts that do not count
+  const decoyP = clamp(0.35 + streak * 0.05, 0.35, 0.85);
+  const comps = keyX.map((kx, lane) => {
+    const winner = lane === order[0];
+    const decoy = !winner && Math.random() < decoyP;
+    return { lane, kx, pose: makePose(sport, winner, decoy, kx === base) };
+  });
+  round = { sport, n, comps, winner: tie ? -1 : order[0], tie, answered: false };
+  lineX = W * 0.5;
+  timeLeft = 9;
+  $("rule").innerHTML = "<b style=\"color:var(--fg)\">" + SPORTS[sport].name + "</b>｜" + SPORTS[sport].rule;
+  const ans = $("answers");
+  ans.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const b = document.createElement("button");
+    b.textContent = LANE_NAMES[i]; b.style.borderColor = COLORS[i]; b.style.color = COLORS[i];
+    b.addEventListener("click", () => answer(i));
+    ans.appendChild(b);
+  }
+  const t = document.createElement("button"); t.className = "tie"; t.textContent = "同着";
+  t.addEventListener("click", () => answer(-1)); ans.appendChild(t);
+  $("fb").textContent = ""; $("fb").className = "feedback";
+  state = "judge";
+}
+function makePose(sport, winner, decoy, front) {
+  // winners (and tied fronts) tend to make their deciding part reach; decoys reach with something else
+  if (sport === "run") return {
+    head: decoy ? rnd(16, 26) : winner ? rnd(0, 8) : rnd(0, 14),
+    arm: decoy ? rnd(18, 30) : rnd(-12, 10),
+    leg: decoy ? rnd(14, 26) : rnd(-6, 12),
+    lean: rnd(0, 6), phase: Math.random(),
+  };
+  if (sport === "horse") return { stretch: decoy ? rnd(0, 0.25) : winner || front ? rnd(0.75, 1) : rnd(0.3, 0.9), gait: Math.random() };
+  if (sport === "bike") return { lean: decoy ? rnd(0.75, 1) : winner || front ? rnd(0, 0.3) : rnd(0.2, 0.8) };
+  return { kick: decoy ? rnd(0, 0.2) : winner || front ? rnd(0.75, 1) : rnd(0.2, 0.8) };
+}
+
+function answer(i) {
+  if (state !== "judge") return;
+  state = "reveal";
+  const ok = round.tie ? i === -1 : i === round.winner;
+  [...$("answers").children].forEach((b) => (b.disabled = true));
+  const fb = $("fb");
+  const right = round.tie ? "同着" : LANE_NAMES[round.winner];
+  if (ok) { streak++; fb.textContent = "正解！ 1着は" + right; fb.className = "feedback ok"; }
+  else { lives--; fb.textContent = (i === null ? "時間切れ。" : "ちがう。") + "1着は" + right; fb.className = "feedback ng"; }
+  updateHud();
+  setTimeout(() => { if (lives <= 0) showResult(); else newRound(); }, ok ? 1000 : 1900);
+}
+function updateHud() { $("hud").innerHTML = streak + "連続 <span class=\"lives\">" + "●".repeat(lives) + "○".repeat(3 - lives) + "</span>"; }
+
+function showResult() {
+  state = "result";
+  $("game").hidden = true; $("result").hidden = false;
+  const title = TITLES.find((t) => streak >= t[0])[1];
+  $("rNum").textContent = streak + "連続";
+  $("rTitle").textContent = "「" + title + "」";
+  $("rLast").textContent = "最後の判定：" + SPORTS[round.sport].name + "（" + SPORTS[round.sport].rule.replace(/<[^>]+>/g, "") + "）";
+  const prev = best;
+  if (streak > best) { best = streak; try { localStorage.setItem("hantei.best", best); } catch (e) {} }
+  $("rBest").textContent = streak > prev && prev ? "自己ベスト更新（前回 " + prev + "連続）" : "自己ベスト " + best + "連続";
+  $("share").onclick = () => {
+    const text = "写真判定係｜" + streak + "連続で正しく判定「" + title + "」\n陸上は胴体、競馬は鼻先、競輪は前輪の先、スケートは刃の先。\n#写真判定係";
+    open("https://x.com/intent/post?text=" + encodeURIComponent(text) + "&url=" + encodeURIComponent(location.href.split("#")[0]), "_blank", "noopener");
+  };
+}
+
+// ---------- drawing ----------
+function draw() {
+  if (!round) return;
+  ctx.fillStyle = "#e9e6dc"; ctx.fillRect(0, 0, W, H);
+  // time scale on top, like a photo-finish print
+  ctx.fillStyle = "#1d1f24"; ctx.fillRect(0, 0, W, 18);
+  ctx.strokeStyle = "#e9e6dc"; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 10) { ctx.beginPath(); ctx.moveTo(x + 0.5, 18); ctx.lineTo(x + 0.5, x % 50 === 0 ? 6 : 12); ctx.stroke(); }
+  round.comps.forEach((c) => {
+    const y0 = 22 + c.lane * laneH;
+    ctx.fillStyle = c.lane % 2 ? "#e1ded3" : "#ece9df"; ctx.fillRect(0, y0, W, laneH);
+    ctx.fillStyle = COLORS[c.lane]; ctx.font = "800 13px sans-serif"; ctx.textAlign = "left"; ctx.fillText(LANE_NAMES[c.lane], 6, y0 + 16);
+    ctx.save(); ctx.translate(c.kx * unit, y0 + laneH - 6); ctx.scale(unit, unit);
+    drawFigure(round.sport, c.pose, COLORS[c.lane]);
+    ctx.restore();
+  });
+  // comparison line
+  ctx.fillStyle = "#d1342f"; ctx.fillRect(Math.round(lineX) - 0.5, 18, 1.5, H - 18);
+  // reveal the deciding points
+  if (state === "reveal") {
+    round.comps.forEach((c) => {
+      const y0 = 22 + c.lane * laneH, ky = keyY(round.sport, c.pose);
+      ctx.strokeStyle = "#2f8a4a"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(c.kx * unit, y0 + 2); ctx.lineTo(c.kx * unit, y0 + laneH - 2); ctx.stroke();
+      ctx.fillStyle = "#2f8a4a"; ctx.beginPath(); ctx.arc(c.kx * unit, y0 + laneH - 6 + ky * unit, 4, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+}
+function keyY(sport, p) { return sport === "run" ? -58 : sport === "horse" ? (-60 + (1 - p.stretch) * -10) : sport === "bike" ? -14 : -1; }
+
+// Figures face right. The deciding point is at x = 0; y = 0 is the ground.
+function drawFigure(sport, p, col) {
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const dark = "#2b2b2e", skin = "#c98b62";
+  if (sport === "run") {
+    const hip = [-6 - p.lean, -40], sh = [-2, -74];
+    // back leg and arm
+    limb([hip, [-18, -22], [-30, -6]], dark, 7);
+    limb([[sh[0] - 4, sh[1] + 4], [-20, -58], [-30, -48]], skin, 5);
+    // torso (front edge is the deciding line at x = 0)
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(0, -74); ctx.lineTo(0 - p.lean, -40); ctx.lineTo(-18 - p.lean, -40); ctx.lineTo(-16, -76); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "700 9px sans-serif"; ctx.textAlign = "center"; ctx.fillText("" + (1 + Math.floor(p.phase * 9)), -8, -54);
+    // head
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(-6 + p.head, -86, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = skin; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(-6, -76); ctx.lineTo(-6 + p.head * 0.7, -80); ctx.stroke();
+    // front leg and arm
+    limb([hip, [8, -24], [p.leg, -2]], dark, 7);
+    limb([[sh[0] - 3, sh[1] + 4], [p.arm * 0.5, -60], [p.arm, -52]], skin, 5);
+  } else if (sport === "horse") {
+    const s = p.stretch;
+    const chest = -(26 + 18 * s); // body front sits closer to the nose when the head is up
+    const noseY = -60 - (1 - s) * 10;
+    const bodyC = chest - 34;
+    ctx.fillStyle = "#7a4a2a";
+    // legs
+    [[bodyC - 26, 1], [bodyC - 18, -1], [chest - 8, 1], [chest - 2, -1]].forEach(([x, dir], i) => {
+      const sw = Math.sin(p.gait * 6 + i * 1.7) * 10 * dir;
+      limb([[x, -42], [x + sw * 0.5, -22], [x + sw, -2]], "#5c361d", 5);
+    });
+    ctx.fillStyle = "#7a4a2a";
+    ctx.beginPath(); ctx.ellipse(bodyC, -48, 36, 15, 0, 0, Math.PI * 2); ctx.fill();
+    // neck and head
+    const poll = [-(16 + 6 * s), noseY - 10 + (1 - s) * -4];
+    ctx.beginPath(); ctx.moveTo(chest - 8, -58); ctx.lineTo(poll[0] - 4, poll[1] - 2); ctx.lineTo(poll[0] + 4, poll[1] + 6); ctx.lineTo(chest + 2, -42); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(poll[0] - 4, poll[1] - 2); ctx.lineTo(0, noseY - 3); ctx.lineTo(0, noseY + 4); ctx.lineTo(poll[0] + 2, poll[1] + 9); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#3c2412"; ctx.beginPath(); ctx.moveTo(poll[0] - 2, poll[1] - 3); ctx.lineTo(poll[0] - 6, poll[1] - 11); ctx.lineTo(poll[0] + 1, poll[1] - 4); ctx.fill();
+    // jockey
+    ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(bodyC + 6, -70, 9, 7, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(bodyC + 14, -80, 5, 0, Math.PI * 2); ctx.fill();
+    limb([[bodyC + 4, -66], [bodyC + 2, -56], [bodyC + 10, -52]], "#fff", 4);
+  } else if (sport === "bike") {
+    const fw = [-14, -14], rw = [-74, -14], r = 14;
+    ctx.strokeStyle = dark; ctx.lineWidth = 2.5;
+    [fw, rw].forEach((w) => { ctx.beginPath(); ctx.arc(w[0], w[1], r, 0, Math.PI * 2); ctx.stroke(); });
+    ctx.strokeStyle = col; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(rw[0], rw[1]); ctx.lineTo(-50, -40); ctx.lineTo(-22, -40); ctx.lineTo(fw[0], fw[1]); ctx.moveTo(-50, -40); ctx.lineTo(-46, -14); ctx.lineTo(rw[0], rw[1]); ctx.stroke();
+    // the rider: leaning forward puts the body ahead, throwing the bike leaves it behind
+    const L = p.lean;
+    const hipR = [-54 + L * 6, -48], shR = [-32 + L * 9, -58 + L * 3], headR = [-24 + L * 10, -65 + L * 3];
+    limb([hipR, [-38, -36], [-44, -20]], dark, 6);
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(hipR[0] - 5, hipR[1] + 4); ctx.lineTo(shR[0], shR[1] - 6); ctx.lineTo(shR[0] + 2, shR[1] + 5); ctx.lineTo(hipR[0] + 4, hipR[1] + 6); ctx.closePath(); ctx.fill();
+    limb([shR, [-22, -48], [-22, -42]], skin, 4);
+    ctx.fillStyle = "#f0f0f0"; ctx.beginPath(); ctx.arc(headR[0], headR[1], 7, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+  } else {
+    // speed skater, crouched. Leading skate blade tip is at x = 0.
+    const k = p.kick;
+    const hip = [-44 - k * 18, -34 - k * 2];
+    const sh = [hip[0] + 24, -48], head = [hip[0] + 32, -50];
+    limb([hip, [hip[0] - 18, -22], [hip[0] - 34, -4]], col, 7);
+    ctx.fillStyle = "#999"; ctx.fillRect(hip[0] - 46, -2, 26, 2.5);
+    limb([hip, [hip[0] + 16 + k * 10, -20], [-24, -4]], col, 7);
+    ctx.fillStyle = dark; ctx.fillRect(-26, -7, 18, 6);
+    ctx.fillStyle = "#999"; ctx.fillRect(-30, -2, 30, 2.5);
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(hip[0] - 6, hip[1] + 5); ctx.lineTo(sh[0], sh[1] - 5); ctx.lineTo(sh[0] + 2, sh[1] + 6); ctx.lineTo(hip[0] + 6, hip[1] + 8); ctx.closePath(); ctx.fill();
+    limb([[sh[0] - 4, sh[1]], [sh[0] - 22, sh[1] + 2], [sh[0] - 38, sh[1] - 2]], col, 5);
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(head[0], head[1], 7, 0, Math.PI * 2); ctx.fill();
+  }
+}
+function limb(pts, color, w) {
+  ctx.strokeStyle = color; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke();
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - (lastT || now)) / 1000); lastT = now;
+  if (state === "judge") {
+    timeLeft -= dt;
+    $("bar").style.width = clamp(timeLeft / 9 * 100, 0, 100) + "%";
+    if (timeLeft <= 0) answer(null);
+  }
+  if (state === "judge" || state === "reveal") draw();
+  requestAnimationFrame(loop);
+}
+
+// ---------- input ----------
+function moveLine(e) { const r = cv.getBoundingClientRect(); lineX = clamp(e.clientX - r.left, 0, W); }
+cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); moveLine(e); });
+cv.addEventListener("pointermove", (e) => { if (e.buttons || e.pointerType === "mouse") moveLine(e); });
+addEventListener("keydown", (e) => {
+  if (state !== "judge") return;
+  if (e.key === "ArrowLeft") lineX -= e.shiftKey ? 1 : 4;
+  if (e.key === "ArrowRight") lineX += e.shiftKey ? 1 : 4;
+  const n = +e.key; if (n >= 1 && n <= round.n) answer(n - 1);
+  if (e.key === "0" || e.key === "t") answer(-1);
+});
+addEventListener("resize", () => { if (round) { const old = W; layout(round.n); lineX *= W / old; } });
+function start() {
+  streak = 0; lives = 3; updateHud();
+  $("intro").hidden = true; $("result").hidden = true; $("game").hidden = false;
+  newRound();
+}
+$("start").addEventListener("click", start);
+$("again").addEventListener("click", start);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
